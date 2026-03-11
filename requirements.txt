@@ -1,0 +1,7 @@
+transformers>=4.46.0
+peft>=0.16.0
+bitsandbytes>=0.46.1
+accelerate
+torch
+gradio
+huggingface_hub
