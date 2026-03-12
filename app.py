@@ -1,59 +1,51 @@
 import gradio as gr
 import torch
-import spaces
-from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
-from threading import Thread
+from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig
 
 MODEL_ID = "somendrew/GenZify-adapter"
 
 print("Loading GenZify... no cap this takes a sec ⏳")
 
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=torch.bfloat16,
+    bnb_4bit_use_double_quant=True,
+)
+
 model = AutoModelForCausalLM.from_pretrained(
     MODEL_ID,
-    torch_dtype=torch.bfloat16,
+    quantization_config=bnb_config,
     device_map="auto",
 )
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 model.eval()
-model.config.use_cache = True
 print("✅ Ready to slay!")
 
-
-@spaces.GPU
 def generate_genz(instruction, input_text, max_new_tokens, temperature, repetition_penalty):
     if not instruction.strip():
-        yield "bestie u forgot to type something 💀"
-        return
+        return "bestie u forgot to type something 💀"
 
     user_content = f"{instruction}\n\n{input_text}" if input_text.strip() else instruction
     messages = [{"role": "user", "content": user_content}]
     prompt = tokenizer.apply_chat_template(
         messages, tokenize=False, add_generation_prompt=True
     )
-
     device = next(model.parameters()).device
     inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
-    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=int(max_new_tokens),
+            temperature=float(temperature),
+            top_p=0.9,
+            do_sample=True,
+            repetition_penalty=float(repetition_penalty),
+        )
 
-    gen_kwargs = dict(
-        **inputs,
-        max_new_tokens=int(max_new_tokens),
-        temperature=float(temperature),
-        top_p=0.9,
-        do_sample=True,
-        repetition_penalty=float(repetition_penalty),
-        streamer=streamer,
-    )
-
-    thread = Thread(target=model.generate, kwargs=gen_kwargs)
-    thread.start()
-
-    output = ""
-    for chunk in streamer:
-        output += chunk
-        yield output
-
+    response = outputs[0][inputs["input_ids"].shape[1]:]
+    return tokenizer.decode(response, skip_special_tokens=True)
 
 EXAMPLES = [
     ["Generate a sentence with complex vocabulary.", "Words: devious, antagonistic, ferocity", 150, 0.8, 1.1],
